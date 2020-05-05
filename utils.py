@@ -1,8 +1,7 @@
 
 # coding: utf-8
 
-# In[2]:
-
+# In[1]:
 
 
 import tensorflow.keras as keras
@@ -15,10 +14,10 @@ import random
 import time
 
 import xml.etree.ElementTree as ET
-# import pyclipper
-# from shapely.geometry import Polygon
+
 import imgaug
 from imgaug import augmenters as iaa
+from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 
 
 # In[ ]:
@@ -45,14 +44,13 @@ def true_boxes_process(true_boxes, anchors, num_class, image_size=(416,416)):
                                                                                 (image_size[1]//16, image_size[0]//16),
                                                                                 (image_size[1]//8, image_size[0]//8))]
     
-    # true_boxes.shape: (batch_size, max_boxes, 5)  5->x, y, w, h, class_id 其中x,y,w,h都是相对于整张图片大小的诡异画值
+    # true_boxes.shape: (batch_size, max_boxes, 5)  5->x, y, w, h, class_id 其中x,y,w,h都是相对于整张图片大小的归化值
     true_xy_relative = ((true_boxes[:, :, 2:4] + true_boxes[:, :, :2]) // 2) / (image_size[1], image_size[0])
     true_wh_relative = (true_boxes[:, :, 2:4] - true_boxes[:, :, :2] ) / (image_size[1], image_size[0])
     true_boxes_relative = np.concatenate([true_xy_relative, true_wh_relative, np.expand_dims(true_boxes[:, :, 4], axis=-1)], axis=-1)
     
     # anchors_topleft_relative.shape: (9,2)
     anchors_topleft_relative = -0.5*anchors_
-#     print(anchors_topleft_relative)
     # anchors_downright_relative.shape: (9,2)
     anchors_downright_relative = 0.5*anchors_
     # anchors_area.shape: (9,)
@@ -98,15 +96,10 @@ def true_boxes_process(true_boxes, anchors, num_class, image_size=(416,416)):
         # truth_anchors_id.shape: (max_boxes,)
         truth_anchors_id = np.argmax(IOU, axis=-1)
         
-        # out_layers_num.shape: (max_boxes,)
-#         out_layers_num = [int(i/3) for i in truth_anchors_id]
-        
         layer2grid = [13, 26, 52]
         layer2scale = [32.0, 16.0, 8.0]
         
-#         for i, box in enumerate(boxes):
         for i in range(boxes.shape[0]):
-            
             if boxes[i, 2] == 0:
                 continue
             
@@ -115,8 +108,6 @@ def true_boxes_process(true_boxes, anchors, num_class, image_size=(416,416)):
             scale = layer2scale[layer_num]  # 32 16 8
 #             center_ = np.maximum(boxes_center[i]-1.0, 0.0) // scale  # grid下的中心坐标
             center_ = boxes_center[i] / scale# grid下的中心坐标
-#             print(grid)
-#             print(center_)
             x_ = math.floor(center_[0])
             y_  = math.floor(center_[1])
             # y_true[layer_num].shape: (batch_size,XX,XX,3,5+num_class)  5-> p,x,y,w,h
@@ -137,10 +128,7 @@ def true_boxes_process(true_boxes, anchors, num_class, image_size=(416,416)):
         Y[:, 0:a_, :, :] = np.reshape(y_true[0], (true_boxes.shape[0], a_, y_true[0].shape[3], y_true[0].shape[4]))
         Y[:, a_:(a_+b_), :, :] = np.reshape(y_true[1], (true_boxes.shape[0], b_, y_true[1].shape[3], y_true[1].shape[4]))
         Y[:, (a_+b_):(a_+b_+c_), :, :] = np.reshape(y_true[2], (true_boxes.shape[0], c_, y_true[2].shape[3], y_true[2].shape[4]))
-#         print(y_true[0].shape[1]*y_true[0].shape[2]+y_true[1].shape[1]*y_true[1])
     return y_true, Y
-
-
 
 def parse_xml(xml_path, cls2id):
     in_file = open(xml_path)
@@ -163,15 +151,16 @@ def parse_xml(xml_path, cls2id):
                    
     return np.array(boxes)
 
+aug = iaa.SomeOf((0, 3),[
+    iaa.GammaContrast([0.5, 1.5]),
+    iaa.Affine(translate_percent=[-0.05, 0.05], scale=[0.9, 1.1], mode='constant'),  # mode='edge'
+    iaa.Fliplr(0.5),
+    iaa.Flipud(0.5)
+])
+
 
 # In[ ]:
 
-
-aug = iaa.Sequential([
-    iaa.GaussianBlur(sigma=(0.0,2.0)),  # 高斯模糊增强器
-    iaa.AdditiveGaussianNoise(scale=(0, 0.05*255)),  # 高斯噪声增强器
-    iaa.AddToHueAndSaturation((-50, 50))  # color jitter, only affects the image
-])
 
 class DataGenerator(keras.utils.Sequence):
     # list_IDs: 图片名list   xml_file list： 图片名对应的xml_file list
@@ -225,31 +214,32 @@ class DataGenerator(keras.utils.Sequence):
             boxes = parse_xml(list_xmls_temp[i], self.cls2id)
             boxes[:, 0:4] = boxes[:, 0:4] * scale
             
+            if self.is_training:
+                bbs = BoundingBoxesOnImage([BoundingBox(x1=float(ii[0]), y1=float(ii[1]), x2=float(ii[2]), y2=float(ii[3])) for ii in boxes], shape=img_mask.shape)
+                img_mask, boxes_aug = aug(image=img_mask, bounding_boxes=bbs)
+                boxes_aug = boxes_aug.remove_out_of_image().clip_out_of_image()
+                for j in range(len(boxes_aug)):
+                    boxes[j, :4] = [float(boxes_aug.bounding_boxes[j].x1), float(boxes_aug.bounding_boxes[j].y1), float(boxes_aug.bounding_boxes[j].x2), float(boxes_aug.bounding_boxes[j].y2)]
+            
             boxes_data = np.zeros((self.max_boxes,5))
             if len(boxes) > 0 and len(boxes)<= self.max_boxes:
-                np.random.shuffle(boxes)
+#                 np.random.shuffle(boxes)
                 boxes_data[:len(boxes)] = boxes
             elif len(boxes) > 0 and len(boxes) > self.max_boxes:
-                np.random.shuffle(boxes)
+#                 np.random.shuffle(boxes)
                 boxes_data = boxes[:self.max_boxes]
-                
+        
             IMAGES.append(img_mask)
             BOXES.append(boxes_data)
             
         IMAGES = np.array(IMAGES)
         BOXES = np.array(BOXES)
-        
+    
         # y_true: [(batch_size,13,13,3,5+num_class), (batch_size,26,26,3,5+num_class), (batch_size,52,52,3,5+num_class)]
         # y_true box坐标x,y,w,h为相对全图的比例值， 0～1 之间
         # Y = (batch_size, 13*13+26*26+52*52, 3, 5+num_class)
-#         print(IMAGES.shape)
         y_true, Y = true_boxes_process(BOXES, self.anchors, self.num_class, self.image_size)
-    
-        if self.is_training:
-            IMAGES = IMAGES.astype(np.uint8)
-            IMAGES = aug.augment_images(IMAGES)
-#         print(IMAGES.shape)
-#         print(Y.shape)
-        return [IMAGES, Y], yy
-#         return IMAGES, Y
+
+#         return [IMAGES, Y], yy
+        return [IMAGES, Y], [yy, yy, yy]
 

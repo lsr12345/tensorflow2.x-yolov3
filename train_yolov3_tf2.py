@@ -10,7 +10,6 @@ import tensorflow.keras as keras
 from math import ceil
 from tensorflow.keras import callbacks
 import tensorflow.keras.backend as K
-# import keras
 
 import numpy as np
 import os
@@ -18,11 +17,7 @@ import cv2
 
 from model import yolov3_model
 from utils import DataGenerator
-# from loss_tmp import yolo_loss
 
-from functools import partial
-# from model_keras import yolov3_model
-# from utils_keras import DataGenerator
 
 print(tf.__version__)
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -34,7 +29,7 @@ assert tf.config.experimental.get_memory_growth(physical_devices[0]) == True
 # In[2]:
 
 
-lr = 0.001
+lr = 1e-3
 Epochs = 50
 finetune = False
 
@@ -66,7 +61,7 @@ with open(anchor_path, mode='r', encoding='UTF-8') as fr:
 #         anchors = np.array(anchors_).astype(int).reshape((-1,2))[::-1]  # anchors 大 -> 小
 max_boxes = 20
 
-root_path = '/home/shaoran/Data/Dec/VOC 2012/VOCdevkit/VOC2012/'
+root_path = '/home/shaoran/Data/Dec/VOC2012/VOCdevkit/VOC2012/'
 train_test_ratio = 0.95
 
 # list_IDs, list_xmls
@@ -101,6 +96,13 @@ test_list_xmls = list_xmls[int(train_test_ratio*length_data):]
 # In[3]:
 
 
+def yolo_loss_(y_true, y_pred):
+    return y_pred
+
+
+# In[4]:
+
+
 train_generator = DataGenerator(train_list_IDs, train_list_xmls, num_class, cls2id, anchors, batch_size, image_size, max_boxes=max_boxes, is_training=True)
 val_generator = DataGenerator(test_list_IDs, test_list_xmls, num_class, cls2id, anchors, batch_size, image_size, max_boxes=max_boxes, is_training=False)
 
@@ -112,13 +114,14 @@ if finetune:
     lr = lr*0.5
     yolov3_filepath = './models/yolov3_weights.h5'
     
-    model.load_weights(yolov3_filepath, by_name=True, skip_mismatch=True)
+    model.load_weights(yolov3_filepath, by_name=True)
     
     
 # myyolo_loss = partial(yolo_loss, anchors=anchors, num_chasses=num_class, image_size=(416,416), ignore_thresh=0.5)
 # myyolo_loss.__name__ = 'myyolo_loss'
 
-model.compile(loss=lambda y_true, y_pred: y_pred, optimizer=keras.optimizers.Adam(learning_rate=lr))
+# model.compile(loss=lambda y_true, y_pred: tf.reduce_sum(y_pred), optimizer=keras.optimizers.Adam(learning_rate=lr))
+model.compile(loss=[yolo_loss_, yolo_loss_, yolo_loss_], optimizer=keras.optimizers.Adam(learning_rate=lr))
 # model.compile(loss=myyolo_loss, optimizer=keras.optimizers.Adam(learning_rate=lr))
 
 def poly_decay(epoch):
@@ -134,7 +137,16 @@ def poly_decay(epoch):
     # return the new learning rate
     return alpha
 
-learningRateScheduler = callbacks.LearningRateScheduler(poly_decay)
+def scheduler(epoch):
+    if epoch < 10:
+        return lr
+    else:
+        return lr * tf.math.pow(0.9, epoch-10)  # tf.math.pow(0.9, 10)=0.35, tf.math.pow(0.9, 20)=0.122, tf.math.pow(0.9, 50)=0.005
+
+learningRateScheduler_poly = callbacks.LearningRateScheduler(poly_decay)
+learningRateScheduler_scheduler = callbacks.LearningRateScheduler(scheduler)
+
+ReduceLROnPlateau = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=3, min_lr=0.000001)
 
 logs_dir = f'logs/{datetime.date.today()}'
 if not os.path.exists(logs_dir):
@@ -151,7 +163,8 @@ model.fit_generator(
     steps_per_epoch=ceil(len(train_list_IDs) // batch_size),
     initial_epoch=0,
     epochs=Epochs,
-    callbacks=[learningRateScheduler, checkpoint, tensorboard],
+#     callbacks=[learningRateScheduler, checkpoint, tensorboard],
+    callbacks=[ReduceLROnPlateau, checkpoint, tensorboard],
     validation_data=val_generator,
     validation_steps=ceil(len(test_list_IDs) // batch_size),
     use_multiprocessing=True, workers=2,

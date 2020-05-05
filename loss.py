@@ -225,10 +225,10 @@ def yolo_loss(y_true, y_pred, anchors, num_chasses, image_size=(416,416), ignore
     # 13*13 = 169  26*26 = 676  52*52 = 2704
 #     ss = tf.reshape(y_true[:,0:169, :, :], [tf.shape(y_true)[0], 13,13,tf.shape(y_true)[2], tf.shape(y_true)[3]])
 #     print(y_true.shape[0])
+
     Y_true = [tf.reshape(y_true[:,0:169, :, :], [tf.shape(y_true)[0], 13,13, tf.shape(y_true)[2], tf.shape(y_true)[3]]),
               tf.reshape(y_true[:, 169:845, :, :], [tf.shape(y_true)[0], 26,26, tf.shape(y_true)[2], tf.shape(y_true)[3]]), 
               tf.reshape(y_true[:, 845:3549, :, :], [tf.shape(y_true)[0], 52,52, tf.shape(y_true)[2], tf.shape(y_true)[3]])]
-#     loss = tf.Variable(initial_value=0.0, trainable=False)
     
     _loss = []
     
@@ -293,20 +293,48 @@ def yolo_loss(y_true, y_pred, anchors, num_chasses, image_size=(416,416), ignore
         ignore_mask = tf.expand_dims(ignore_mask, -1)
         
         # K.binary_crossentropy is helpful to avoid exp overflow.
-        xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(true_xy, xy, from_logits=True)  # 修正 pred[...,1:3] -> xy
-        wh_loss = object_mask * box_loss_scale * 0.5 * K.square(true_wh-wh)  # 修正 pred[...,3:5] -> wh
+#         xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(true_xy, xy, from_logits=True)  # 修正 pred[...,1:3] -> xy
+        aa = tf.reduce_sum(tf.square(true_xy-xy), axis=-1)
+        aa = tf.expand_dims(aa, axis=-1)
+        xy_loss = object_mask * box_loss_scale * aa  # 修正 pred[...,1:3] -> xy
         
-        confidence_loss = object_mask * K.binary_crossentropy(object_mask, confidence, from_logits=True) + (1-object_mask) * K.binary_crossentropy(object_mask, confidence, from_logits=True) * ignore_mask
+#         wh_loss = object_mask * box_loss_scale * 0.5 * K.square(true_wh-wh)  # 修正 pred[...,3:5] -> wh
+        bb = tf.reduce_sum(tf.square(true_wh-wh), axis=-1)
+        bb = tf.expand_dims(bb, axis=-1)
+        wh_loss = object_mask * box_loss_scale * bb   # 修正 pred[...,3:5] -> wh
+        
+        confidence_loss_ = K.binary_crossentropy(object_mask, confidence, from_logits=True)
+        
+        confidence_loss = object_mask * confidence_loss_ + (1-object_mask) * confidence_loss_ * ignore_mask
         class_loss = object_mask * K.binary_crossentropy(true_class_probs, class_probs, from_logits=True)
+
+#         xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3, 4))
+#         wh_loss = tf.reduce_sum(wh_loss, axis=(1, 2, 3, 4))
+#         confidence_loss = tf.reduce_sum(confidence_loss, axis=(1, 2, 3, 4))
+#         class_loss = tf.reduce_sum(class_loss, axis=(1, 2, 3, 4))
+
+        xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))
+        wh_loss = tf.reduce_sum(wh_loss, axis=(1, 2, 3))
+        confidence_loss = tf.reduce_sum(confidence_loss, axis=(1, 2, 3))
+        class_loss = tf.reduce_sum(class_loss, axis=(1, 2, 3))
+
         
-        xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3, 4))
-        wh_loss = tf.reduce_sum(wh_loss, axis=(1, 2, 3, 4))
-        confidence_loss = tf.reduce_sum(confidence_loss, axis=(1, 2, 3, 4))
-        class_loss = tf.reduce_sum(class_loss, axis=(1, 2, 3, 4))
         _loss.append(xy_loss + wh_loss + confidence_loss + class_loss)
-    loss = _loss[0] + _loss[1] + _loss[2]
-    
-    return loss
+        '''
+        print(xy_loss.shape)
+        print(wh_loss.shape)
+        print(confidence_loss.shape)
+        print(class_loss.shape)
+        xy_loss = tf.reduce_sum(xy_loss)
+        wh_loss = tf.reduce_sum(wh_loss)
+        confidence_loss = tf.reduce_sum(confidence_loss)
+        class_loss = tf.reduce_sum(class_loss)
+        _loss.append(xy_loss + wh_loss + confidence_loss + class_loss)
+        '''
+        
+#     loss = _loss[0] + _loss[1] + _loss[2]
+#     return loss
+    return _loss[0], _loss[1], _loss[2]
 
 
 # In[7]:

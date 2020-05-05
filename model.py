@@ -137,10 +137,12 @@ def yolov3_model(num_class, anchors, max_boxes=10, image_size=(416,416), batch_s
         
         x = Darknet_body(inputs, is_training)
         pred = head_net(x, num_class, is_training)
-        loss = Calculate_loss_Layer(anchors, num_class, image_size)(y_true, pred)  # true_boxes
-#         loss = keras.layers.Lambda(lambda x: yolo_loss(x[0], x[1], x[2], x[3], x[4], x[5]))([y_true, pred, anchors, num_class, image_size, 0.5])
-        model = keras.Model([inputs, y_true], loss)
-#         model = keras.Model(inputs, pred)
+        
+#         loss = Calculate_loss_Layer(anchors, num_class, image_size)(y_true, pred)  # true_boxes
+#         model = keras.Model([inputs, y_true], loss)
+
+        loss_0, loss_1, loss_2 = Calculate_loss_Layer(anchors, num_class, image_size)(y_true, pred)  # true_boxes
+        model = keras.Model([inputs, y_true], [loss_0, loss_1, loss_2])
     return model
 
 
