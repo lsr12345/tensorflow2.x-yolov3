@@ -12,100 +12,6 @@ import numpy as np
 
 # In[3]:
 
-"""
-
-arg:
-    true_boxes: (batch_size, max_boxes, 5)  5->x_min, y_min, x_max, y_max, class_id  np.array
-    anchors: (9,2)  -> w,h
-    image_size: (H, W)
-    
-return:
-    y_true: [(batch_size,13,13,3,5+num_class), (batch_size,26,26,3,5+num_class), (batch_size,52,52,3,5+num_class)] 
-    y_true box坐标x,y,w,h为相对全图的比例值， 0～1 之间
-
-
-def true_boxes_process(true_boxes, anchors, num_chasses, image_size=(416,416)):
-        
-    y_true = [tf.zeros((true_boxes.shape[0], i, j, 3, num_chasses+5)) for i, j in ((image_size[1]//32, image_size[0]//32),
-                                                                                (image_size[1]//16, image_size[0]//16),
-                                                                                (image_size[1]//8, image_size[0]//8))]
-    
-    # true_boxes.shape: (batch_size, max_boxes, 5)  5->x, y, w, h, class_id 其中x,y,w,h都是相对于整张图片大小的诡异画值
-    true_xy_relative = ((true_boxes[:, :, 2:4] + true_boxes[:, :, :2]) // 2) / (image_size[1], image_size[0])
-    true_wh_relative = (true_boxes[:, :, 2:4] - true_boxes[:, :, :2] ) / (image_size[1], image_size[0])
-    true_boxes_relative = tf.concat([true_xy_relative, true_wh_relative, tf.expand_dims(true_boxes[:, :, 4], axis=-1)], axis=-1)
-    
-    # anchors_topleft_relative.shape: (9,2)
-    anchors_topleft_relative = -0.5*anchors
-    # anchors_downright_relative.shape: (9,2)
-    anchors_downright_relative = 0.5*anchors
-    # anchors_area.shape: (9,)
-    anchors_area = anchors[:, 0] * anchors[:, 1]
-    for batch in range(true_boxes.shape[0]):
-        # boxes.shape: (max_boxes, 5)
-        boxes = true_boxes[batch]
-        # boxes_topleft.shape: (max_boxes, 2)
-        boxes_topleft = boxes[:, :2]
-        # boxes_downright.shape: (max_boxes, 2)
-        boxes_downright = boxes[:, 2:4]
-        # boxes_wh.shape: (max_boxes, 2)
-        boxes_wh = boxes_downright - boxes_topleft
-        # boxes_wh.shape: (max_boxes, 1, 2)
-        boxes_wh = tf.expand_dims(boxes_wh, axis=-2)
-        # boxes_center.shape: (max_boxes, 2)
-        boxes_center = (boxes_downright + boxes_topleft) // 2
-        # boxes_topleft_relative.shape: (max_boxes, 1, 2)
-        boxes_topleft_relative = -0.5*boxes_wh
-        # boxes_downright_relative.shape: (max_boxes, 1, 2)
-        boxes_downright_relative = 0.5*boxes_wh
-        # boxes_area.shape: (max_boxes, 1)
-        boxes_area = boxes_wh[:, :, 0] * boxes_wh[:, :, 1]
-        
-        # intersect_topleft.shape: (max_boxes, 9, 2)
-        boxes_topleft_relative = tf.cast(boxes_topleft_relative, anchors_topleft_relative.dtype)
-        intersect_topleft = tf.maximum(boxes_topleft_relative, anchors_topleft_relative)
-        # intersect_downright.shape: (max_boxes, 9, 2)
-        boxes_downright_relative = tf.cast(boxes_downright_relative, anchors_downright_relative.dtype)
-        intersect_downright = tf.minimum(boxes_downright_relative, anchors_downright_relative)
-        # intersect_wh.shape: (max_boxes, 9, 2)
-        intersect_wh = tf.maximum(intersect_downright - intersect_topleft, 0)
-        # intersect_area.shape: (max_boxes, 9)
-        intersect_area = intersect_wh[:, :, 0] * intersect_wh[:, :, 1]
-    
-        # IOU.shape: (max_boxes, 9)
-        boxes_area = tf.cast(boxes_area, anchors_area.dtype)
-        IOU = intersect_area / (boxes_area + anchors_area - intersect_area)
-        # truth_anchors_id.shape: (max_boxes,)
-        truth_anchors_id = tf.argmax(IOU, axis=-1)
-        
-        # out_layers_num.shape: (max_boxes,)
-#         out_layers_num = [int(i/3) for i in truth_anchors_id]
-        
-        layer2grid = tf.constant([13, 26, 52])
-        layer2scale = tf.constant([32.0, 16.0, 8.0])
-        
-#         for i, box in enumerate(boxes):
-        for i in range(boxes.shape[0]):
-
-            if boxes[i, 2] == 0:
-                continue
-#             layer_num = out_layers_num[i]  # 0 1 2
-            layer_num = int(truth_anchors_id[i]/3)
-            grid = layer2grid[layer_num]  # 13 26 52
-            scale = layer2scale[layer_num]  # 32 16 8
-            center_ = tf.maximum(boxes_center[i]-1.0, 0.0) // scale  # grid下的中心坐标
-            
-            x_ = center_[0].numpy()
-            y_  = center_[1].numpy()
-            # y_true[layer_num].shape: (batch_size,XX,XX,3,5+num_class)  5-> p,x,y,w,h
-            y_true[layer_num][batch, y_, x_, truth_anchors_id[i].numpy()%3, 0] = 1  # 存在物体
-            y_true[layer_num][batch, y_, x_, truth_anchors_id[i].numpy()%3, 1:5] = true_boxes_relative[batch, i, 0:4]
-            class_id = true_boxes_relative[batch, i, 4]
-            y_true[layer_num][batch, y_, x_, truth_anchors_id[i].numpy()%3, 5+class_id] = 1
-            
-    return y_true
-"""
-
 # In[4]:
 
 
@@ -271,7 +177,8 @@ def yolo_loss(y_true, y_pred, anchors, num_chasses, image_size=(416,416), ignore
         # y_true_[:, :, :, :, 3:5]为相对于整张图的归一化值，其值 //anchors.wh*feature_map的大小再log一下则与pred_wh相对应，定位预测公式反推
         true_wh = tf.math.log(y_true_[:, :, :, :, 3:5] / anchors_ * image_size[::-1])
         # # K.switch(condition, then_expression, else_expression)：Switches between two operations depending on a scalar value.
-        true_wh = K.switch(object_mask, true_wh, tf.zeros_like(true_wh))  # avoid log(0)=-inf
+        # true_wh = K.switch(object_mask, true_wh, tf.zeros_like(true_wh))  # avoid log(0)=-inf
+        true_wh = tf.where(tf.math.is_inf(true_wh), tf.zeros_like(true_wh), true_wh)
         
         # box_loss_scale.shape: (batch_size,h,w,3,1)
         # 计算boxes的位置误差时,根据ground truth的大小对权重系数进行修正：(2 - truth.w*truth.h)，w和h都归一化到(0,1)
